@@ -1,9 +1,5 @@
+streamlit
 transformers
-datasets
-evaluate
-accelerate
-scikit-learn
 torch
 torchvision
 pillow
-gradio
