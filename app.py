@@ -6,7 +6,7 @@ from PIL import Image
 # --- 1. Load Model (cached so it only loads once) ---
 @st.cache_resource
 def load_model():
-    model_path = "YOUR_USERNAME/knee-oa-vit-classifier"  # <-- Replace with your HF username
+    model_path = "Theoanoldgaopalelwe/knee-oa-vit-classifier"  # <-- Replace with your HF username
     processor = ViTImageProcessor.from_pretrained("google/vit-base-patch16-224-in21k")
     model = ViTForImageClassification.from_pretrained(model_path)
     return model, processor
