@@ -1,5 +1,7 @@
 import streamlit as st
 import torch
+import pandas as pd
+import altair as alt
 from transformers import ViTForImageClassification, ViTImageProcessor, CLIPModel, CLIPProcessor
 from PIL import Image
 
@@ -37,7 +39,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. Load Models (Cached) ---
+# --- 3. Load Models (Cached so they only load once) ---
 @st.cache_resource
 def load_vit_model():
     model_path = "Theoanoldgaopalelwe/knee-oa-vit-classifier"
@@ -105,6 +107,7 @@ with col2:
             best_match_label = texts[best_match_idx]
             confidence = probs[best_match_idx].item()
 
+        # If CLIP thinks it's NOT a knee X-ray, stop and show error
         if best_match_label != "a medical knee X-ray" or confidence < 0.4:
             st.error(f"❌ **Invalid Image Detected**\n\nThis looks like **{best_match_label}**. Please upload a valid knee X-ray.")
         else:
@@ -121,9 +124,38 @@ with col2:
             max_confidence = max(confidences.values())
             top_class = max(confidences, key=confidences.get)
 
-            # Display Results
-            st.success(f"**Prediction:** {top_class} ({max_confidence:.2%} confidence)")
-            st.bar_chart(confidences)
+            # --- 6. VISUALIZATIONS ---
+            # Convert dictionary to Pandas DataFrame for charting
+            df = pd.DataFrame(list(confidences.items()), columns=['Severity', 'Confidence'])
             
+            # Visual 1: Metric Card for Top Prediction
+            st.markdown("### 🎯 Top Prediction")
+            st.metric(label="Predicted Severity", value=top_class, delta=f"{max_confidence:.2%} confidence")
+
+            # Visual 2: Horizontal Bar Chart
+            st.markdown("### 📊 Probability Bar Chart")
+            bar_chart = alt.Chart(df).mark_bar().encode(
+                y=alt.Y('Severity', sort='-x', axis=alt.Axis(title='Severity')),
+                x=alt.X('Confidence', scale=alt.Scale(domain=[0, 1]), axis=alt.Axis(title='Probability')),
+                color=alt.Color('Severity', legend=None),
+                tooltip=['Severity', alt.Tooltip('Confidence', format='.2%')]
+            ).properties(height=250)
+            st.altair_chart(bar_chart, use_container_width=True)
+
+            # Visual 3: Donut Chart
+            st.markdown("### 🍩 Probability Distribution")
+            donut_chart = alt.Chart(df).mark_arc(innerRadius=60).encode(
+                theta=alt.Theta(field="Confidence", type="quantitative"),
+                color=alt.Color(field="Severity", type="nominal"),
+                tooltip=['Severity', alt.Tooltip('Confidence', format='.2%')]
+            ).properties(height=300)
+            st.altair_chart(donut_chart, use_container_width=True)
+
+            # Visual 4: Data Table with Progress Bar
+            st.markdown("### 📋 Detailed Breakdown")
+            # Apply a color gradient to the Confidence column
+            styled_df = df.style.background_gradient(subset=['Confidence'], cmap='Teal')
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
+
             st.markdown("---")
             st.caption("Note: This is a proof-of-concept model. Always consult a medical professional for diagnosis.")
