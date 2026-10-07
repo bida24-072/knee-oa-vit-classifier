@@ -2,6 +2,8 @@ import streamlit as st
 import torch
 import pandas as pd
 import altair as alt
+import requests
+from io import BytesIO
 from transformers import ViTForImageClassification, ViTImageProcessor, CLIPModel, CLIPProcessor
 from PIL import Image
 from datasets import load_dataset
@@ -45,11 +47,8 @@ class_names = ['0Normal', '1Doubtful', '2Mild', '3Moderate', '4Severe']
 with st.sidebar:
     st.image("https://huggingface.co/front/assets/huggingface_logo-noborder.svg", width=50)
     st.title("About This Project")
-    st.info(
-        "This dashboard uses a fine-tuned **Vision Transformer (ViT)** to classify "
-        "knee osteoarthritis severity from X-rays based on the KL grading system."
-    )
-    st.warning("⚠️ **Proof of Concept:** This model was trained for 20 steps. It is not medically accurate yet.")
+    st.info("This dashboard uses a fine-tuned **Vision Transformer (ViT)** to classify knee osteoarthritis severity.")
+    st.warning("⚠️ **Proof of Concept:** Not medically accurate yet.")
     st.markdown("---")
     st.write("**Model:** [Theoanoldgaopalelwe/knee-oa-vit-classifier](https://huggingface.co/Theoanoldgaopalelwe/knee-oa-vit-classifier)")
 
@@ -57,26 +56,37 @@ with st.sidebar:
 st.title("🦴 Knee Osteoarthritis ViT Classifier")
 
 # Create Tabs
-tab1, tab2 = st.tabs(["📷 Single Image Prediction", "📁 Dataset Inference"])
+tab1, tab2 = st.tabs(["📷 Single Image Prediction", "📁 Batch Inference"])
 
 # ==========================================
 # TAB 1: Single Image Prediction
 # ==========================================
 with tab1:
-    st.write("Upload a knee X-ray image to classify its osteoarthritis severity (KL Grades 0-4).")
+    st.write("Upload, paste a screenshot (Ctrl+V), or paste a URL of a knee X-ray.")
     col1, col2 = st.columns([1, 1], gap="large")
 
     with col1:
-        st.subheader("1. Upload Image")
-        uploaded_file = st.file_uploader("Choose an X-ray image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
+        st.subheader("1. Provide Image")
+        uploaded_file = st.file_uploader("Upload or paste (Ctrl+V) an X-ray image", type=["jpg", "jpeg", "png"], label_visibility="collapsed", key="single_uploader")
+        st.write("**OR**")
+        image_url = st.text_input("Paste an Image URL")
+
+        image = None
         if uploaded_file is not None:
             image = Image.open(uploaded_file).convert("RGB")
             st.image(image, caption="Uploaded Image", use_column_width=True)
+        elif image_url:
+            try:
+                response = requests.get(image_url)
+                image = Image.open(BytesIO(response.content)).convert("RGB")
+                st.image(image, caption="Image from URL", use_column_width=True)
+            except Exception as e:
+                st.error(f"Could not load image from URL. Error: {e}")
 
     with col2:
         st.subheader("2. Analysis Results")
-        if uploaded_file is None:
-            st.info("Awaiting image upload...")
+        if image is None:
+            st.info("Awaiting image... Upload a file, paste a screenshot, or provide a URL.")
         else:
             with st.spinner("Validating image..."):
                 texts = ["a medical knee X-ray", "a photograph of a person", "an animal", "a random object or scene"]
@@ -129,75 +139,158 @@ with tab1:
                 st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
 # ==========================================
-# TAB 2: Dataset Inference
+# TAB 2: Batch Inference (Upload OR HF Dataset)
 # ==========================================
 with tab2:
-    st.write("Paste a Hugging Face dataset ID to run batch inference on a small subset of images.")
-    st.info("⚠️ **Note:** To prevent the app from crashing, we limit processing to a maximum of 10 images.")
+    st.write("Run batch inference by uploading multiple local images, or by using a Hugging Face dataset ID.")
     
-    dataset_id = st.text_input("Hugging Face Dataset ID", value="knee-arthritis/knee-oa-leakage-free")
-    split = st.selectbox("Dataset Split", ["test", "validation", "train"], index=0)
-    num_samples = st.slider("Number of images to process", min_value=1, max_value=10, value=5)
+    source = st.radio("Select Data Source:", ["📤 Upload Local Images", "🤗 Use Hugging Face Dataset"], horizontal=True)
     
-    if st.button("🚀 Run Batch Inference"):
-        if not dataset_id:
-            st.warning("Please enter a valid Dataset ID.")
-        else:
-            try:
-                with st.spinner(f"Loading dataset '{dataset_id}' ({split} split)..."):
-                    ds = load_dataset(dataset_id, split=split)
-                
-                st.success(f"Loaded {len(ds)} images. Processing first {num_samples}...")
+    st.markdown("---")
+
+    # --- Option A: Upload Local Images ---
+    if source == "📤 Upload Local Images":
+        st.info("⚠️ **Note:** To prevent the app from crashing, we limit processing to a maximum of **20 images** per batch.")
+        
+        uploaded_files = st.file_uploader(
+            "Upload a batch of X-ray images", 
+            type=["jpg", "jpeg", "png"], 
+            accept_multiple_files=True,
+            key="batch_uploader"
+        )
+        
+        if st.button("🚀 Run Batch Inference on Uploaded Images"):
+            if not uploaded_files:
+                st.warning("Please upload at least one image.")
+            else:
+                num_files = min(len(uploaded_files), 20)
+                if len(uploaded_files) > 20:
+                    st.warning(f"You uploaded {len(uploaded_files)} images. Processing only the first 20 to prevent memory crash.")
                 
                 results = []
                 progress_bar = st.progress(0)
                 
-                for i in range(min(num_samples, len(ds))):
-                    sample = ds[i]
-                    img = sample['image'].convert("RGB")
-                    true_label_idx = sample['label']
-                    true_label = class_names[true_label_idx] if true_label_idx < len(class_names) else f"Unknown ({true_label_idx})"
+                for i, file in enumerate(uploaded_files[:20]):
+                    img = Image.open(file).convert("RGB")
                     
-                    # ViT Inference
-                    vit_inputs = vit_processor(images=img, return_tensors="pt")
+                    # Run CLIP Bouncer
+                    texts = ["a medical knee X-ray", "a photograph of a person", "an animal", "a random object or scene"]
+                    clip_inputs = clip_processor(text=texts, images=img, return_tensors="pt", padding=True)
                     with torch.no_grad():
-                        vit_outputs = vit_model(**vit_inputs)
-                        logits = vit_outputs.logits
-                    probabilities = torch.nn.functional.softmax(logits, dim=-1)[0]
-                    pred_idx = probabilities.argmax().item()
-                    pred_label = class_names[pred_idx]
-                    conf = probabilities[pred_idx].item()
+                        clip_outputs = clip_model(**clip_inputs)
+                        clip_probs = clip_outputs.logits_per_image.softmax(dim=1)[0]
                     
-                    results.append({
-                        "Image": img,
-                        "True Label": true_label,
-                        "Predicted": pred_label,
-                        "Confidence": f"{conf:.2%}"
-                    })
+                    best_match_idx = clip_probs.argmax().item()
+                    best_match_label = texts[best_match_idx]
+                    clip_conf = clip_probs[best_match_idx].item()
+
+                    if best_match_label != "a medical knee X-ray" or clip_conf < 0.4:
+                        # Invalid image
+                        results.append({
+                            "Image": img,
+                            "Filename": file.name,
+                            "Status": f"❌ Invalid: {best_match_label}",
+                            "Predicted": "N/A",
+                            "Confidence": "N/A"
+                        })
+                    else:
+                        # Valid image, run ViT
+                        vit_inputs = vit_processor(images=img, return_tensors="pt")
+                        with torch.no_grad():
+                            vit_outputs = vit_model(**vit_inputs)
+                            logits = vit_outputs.logits
+                        probabilities = torch.nn.functional.softmax(logits, dim=-1)[0]
+                        pred_idx = probabilities.argmax().item()
+                        pred_label = class_names[pred_idx]
+                        conf = probabilities[pred_idx].item()
+                        
+                        results.append({
+                            "Image": img,
+                            "Filename": file.name,
+                            "Status": "✅ Valid",
+                            "Predicted": pred_label,
+                            "Confidence": f"{conf:.2%}"
+                        })
                     
-                    progress_bar.progress((i + 1) / num_samples)
+                    progress_bar.progress((i + 1) / num_files)
                 
                 st.markdown("### 📋 Batch Results")
                 results_df = pd.DataFrame(results)
-                
-                # Display results in a nice table with images
                 st.dataframe(
                     results_df,
                     column_config={
-                        "Image": st.column_config.ImageColumn("X-ray", width="medium"),
-                        "True Label": st.column_config.TextColumn("True Label"),
+                        "Image": st.column_config.ImageColumn("X-ray", width="small"),
+                        "Filename": st.column_config.TextColumn("Filename"),
+                        "Status": st.column_config.TextColumn("Status"),
                         "Predicted": st.column_config.TextColumn("Predicted"),
                         "Confidence": st.column_config.TextColumn("Confidence"),
                     },
                     use_container_width=True,
                     hide_index=True
                 )
-                
                 st.balloons()
-                
-            except Exception as e:
-                st.error(f"❌ Error loading dataset: {e}")
-                st.info("Please ensure the Dataset ID is correct (e.g., 'knee-arthritis/knee-oa-leakage-free') and is public.")
+
+    # --- Option B: Use Hugging Face Dataset ---
+    else:
+        st.info("⚠️ **Note:** To prevent the app from crashing, we limit processing to a maximum of **10 images** per batch.")
+        dataset_id = st.text_input("Hugging Face Dataset ID", value="knee-arthritis/knee-oa-leakage-free")
+        split = st.selectbox("Dataset Split", ["test", "validation", "train"], index=0)
+        num_samples = st.slider("Number of images to process", min_value=1, max_value=10, value=5)
+        
+        if st.button("🚀 Run Batch Inference on HF Dataset"):
+            if not dataset_id:
+                st.warning("Please enter a valid Dataset ID.")
+            else:
+                try:
+                    with st.spinner(f"Loading dataset '{dataset_id}' ({split} split)..."):
+                        ds = load_dataset(dataset_id, split=split)
+                    
+                    st.success(f"Loaded {len(ds)} images. Processing first {num_samples}...")
+                    
+                    results = []
+                    progress_bar = st.progress(0)
+                    
+                    for i in range(min(num_samples, len(ds))):
+                        sample = ds[i]
+                        img = sample['image'].convert("RGB")
+                        true_label_idx = sample['label']
+                        true_label = class_names[true_label_idx] if true_label_idx < len(class_names) else f"Unknown ({true_label_idx})"
+                        
+                        vit_inputs = vit_processor(images=img, return_tensors="pt")
+                        with torch.no_grad():
+                            vit_outputs = vit_model(**vit_inputs)
+                            logits = vit_outputs.logits
+                        probabilities = torch.nn.functional.softmax(logits, dim=-1)[0]
+                        pred_idx = probabilities.argmax().item()
+                        pred_label = class_names[pred_idx]
+                        conf = probabilities[pred_idx].item()
+                        
+                        results.append({
+                            "Image": img,
+                            "True Label": true_label,
+                            "Predicted": pred_label,
+                            "Confidence": f"{conf:.2%}"
+                        })
+                        
+                        progress_bar.progress((i + 1) / num_samples)
+                    
+                    st.markdown("### 📋 Batch Results")
+                    results_df = pd.DataFrame(results)
+                    st.dataframe(
+                        results_df,
+                        column_config={
+                            "Image": st.column_config.ImageColumn("X-ray", width="medium"),
+                            "True Label": st.column_config.TextColumn("True Label"),
+                            "Predicted": st.column_config.TextColumn("Predicted"),
+                            "Confidence": st.column_config.TextColumn("Confidence"),
+                        },
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    st.balloons()
+                    
+                except Exception as e:
+                    st.error(f"❌ Error loading dataset: {e}")
 
 st.markdown("---")
 st.caption("Note: This is a proof-of-concept model. Always consult a medical professional for diagnosis.")
