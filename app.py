@@ -135,11 +135,23 @@ with tab1:
                 st.altair_chart(donut_chart, use_container_width=True)
 
                 st.markdown("### 📋 Detailed Breakdown")
-                styled_df = df.style.background_gradient(subset=['Confidence'], cmap='Teal')
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df,
+                    column_config={
+                        "Severity": st.column_config.TextColumn("Severity"),
+                        "Confidence": st.column_config.ProgressColumn(
+                            "Confidence",
+                            format="percent",
+                            min_value=0.0,
+                            max_value=1.0,
+                        ),
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
 
 # ==========================================
-# TAB 2: Batch Inference (Upload OR HF Dataset)
+# TAB 2: Batch Inference
 # ==========================================
 with tab2:
     st.write("Run batch inference by uploading multiple local images, or by using a Hugging Face dataset ID.")
@@ -191,7 +203,7 @@ with tab2:
                             "Filename": file.name,
                             "Status": f"❌ Invalid: {best_match_label}",
                             "Predicted": "N/A",
-                            "Confidence": "N/A"
+                            "Confidence": 0.0  # Numeric for ProgressColumn
                         })
                     else:
                         # Valid image, run ViT
@@ -209,7 +221,7 @@ with tab2:
                             "Filename": file.name,
                             "Status": "✅ Valid",
                             "Predicted": pred_label,
-                            "Confidence": f"{conf:.2%}"
+                            "Confidence": conf
                         })
                     
                     progress_bar.progress((i + 1) / num_files)
@@ -223,7 +235,12 @@ with tab2:
                         "Filename": st.column_config.TextColumn("Filename"),
                         "Status": st.column_config.TextColumn("Status"),
                         "Predicted": st.column_config.TextColumn("Predicted"),
-                        "Confidence": st.column_config.TextColumn("Confidence"),
+                        "Confidence": st.column_config.ProgressColumn(
+                            "Confidence",
+                            format="percent",
+                            min_value=0.0,
+                            max_value=1.0,
+                        ),
                     },
                     use_container_width=True,
                     hide_index=True
@@ -269,7 +286,7 @@ with tab2:
                             "Image": img,
                             "True Label": true_label,
                             "Predicted": pred_label,
-                            "Confidence": f"{conf:.2%}"
+                            "Confidence": conf
                         })
                         
                         progress_bar.progress((i + 1) / num_samples)
@@ -282,7 +299,12 @@ with tab2:
                             "Image": st.column_config.ImageColumn("X-ray", width="medium"),
                             "True Label": st.column_config.TextColumn("True Label"),
                             "Predicted": st.column_config.TextColumn("Predicted"),
-                            "Confidence": st.column_config.TextColumn("Confidence"),
+                            "Confidence": st.column_config.ProgressColumn(
+                                "Confidence",
+                                format="percent",
+                                min_value=0.0,
+                                max_value=1.0,
+                            ),
                         },
                         use_container_width=True,
                         hide_index=True
@@ -291,6 +313,7 @@ with tab2:
                     
                 except Exception as e:
                     st.error(f"❌ Error loading dataset: {e}")
+                    st.info("Please ensure the Dataset ID is correct and is public.")
 
 st.markdown("---")
 st.caption("Note: This is a proof-of-concept model. Always consult a medical professional for diagnosis.")
